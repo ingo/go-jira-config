@@ -1,0 +1,202 @@
+endpoint: https://techweb.axway.com/jira
+custom-commands:
+  - name: print-project
+    help: print the name of the configured project
+    script: |-
+        echo $JIRA_PROJECT
+  - name: mine
+    help: display issues assigned to me
+    script: |-
+      if [ -n "$JIRA_PROJECT" ]; then
+          # if `project: ...` configured just list the issues for current project
+          {{jira}} list --template table --query "resolution = unresolved and assignee=currentuser() and project = $JIRA_PROJECT ORDER BY priority asc, created"
+      else
+          # otherwise list issues for all project
+          {{jira}} list --template table --query "resolution = unresolved and assignee=currentuser() ORDER BY priority asc, created"
+      fi
+  - name: projects
+    help: list all projects
+    script: |
+      {{jira}} req "/rest/api/2/project"
+  - name: committers
+    help: list a project
+    script: |
+      names=$({{jira}} list --template json --query "project = $JIRA_PROJECT ORDER BY resolutiondate DESC" | jq '.issues[].fields.assignee.name')
+      echo $names | tr '[:punct:]' ' ' | tr 'A-Z' 'a-z' | tr -s ' ' | tr ' ' '\n' | sort | uniq -c | sort -rn
+  - name: project
+    help: list a project
+    script: |
+      {{jira}} req "/rest/api/2/project/$JIRA_PROJECT"
+  - name: members
+    help: members of a particular role on a project
+    args:
+      - name: ROLE
+        type: enum
+        required: true
+        enum: [admin, dev, spoc, users]
+        # "Administrators": "10002",
+        # "Developers": "10001",
+        # "ECD L1 Support": "10091",
+        # "ECD L2 Support": "10092",
+        # "ECD L3 Support": "10093",
+        # "Manager": "10290",
+        # "PM": "10291",
+        # "Project watcher": "10070",
+        # "QA": "10292",
+        # "SPOC": "10490",
+        # "Sprint Managers": "10190",
+        # "Users": "10000",
+        # "Viewer": "10030",
+        # "Zephyr QA": "10293"
+    script: |
+      ROLEID=""
+      case "{{args.ROLE}}" in
+      "admin")  ROLEID=10002
+          ;;
+      "dev")  ROLEID=10001
+          ;;
+      "spoc")  ROLEID=10490
+          ;;
+      "users")  ROLEID=10000
+          ;;
+      *) ROLEID=""
+         ;;
+      esac
+
+      # Loop through all projects
+      PROJECTS=$({{jira}} req "/rest/api/2/project?expand=lead" | jq -r '[.[] | {name: .name, key: .key, id: .id, lead: .lead.displayName, category: .projectCategory.name}]')
+      echo $PROJECTS | jq -c '.[]' | while read i; do
+        name=$(echo $i | jq -c -r '.name')
+        category=$(echo $i | jq -c -r '.category')
+        if [ "$category" = "AMPLIFY" ]
+        then
+          id=$(echo $i | jq -c -r '.id')
+          # Find the people attached to the specific role
+          names=$({{jira}} req "/rest/api/2/project/$id/role/$ROLEID" | jq -c -r '.actors[].displayName')
+          echo "$name\n======================"
+          echo "$names\n"
+        fi
+      done
+
+  - name: gantt
+    help: create a gantt chart based on a list of issues
+    args:
+      - name: ISSUE
+        required: true
+    script: |
+
+      # Get the list of all issues attached to the initial issue. TBD to allow an array of top-level issues
+      ISSUES=$({{jira}} list --template json --query "issue = {{args.ISSUE}} or issue in linkedAllIssues("{{args.ISSUE}}")")
+      ISSUE_LIST=$(echo $ISSUES | jq -r -c '.issues[].key')
+      LIST=""
+
+      # Due to newlines in the JSON output, jq fails to parse it correctly, so we have to do separate queries for each item
+      for key in $ISSUE_LIST; do
+        echo "Processing $key"
+        summary=$({{jira}} view "$key" --template json --gjq "fields.summary")
+
+        # if no links, write out null
+        links=$({{jira}} view "$key" --template json --gjq "fields.issuelinks.#.inwardIssue.key")
+        if [ $links = "[]" ]; then
+          links="null";
+        else
+          links="'${links//[\[|\]|\"]/}'"
+        fi
+
+        # JIRA reports data in seconds, but Gantt macro requires milliseconds
+        total=$({{jira}} view "$key" --template json --gjq "fields.aggregateprogress.total")
+        total="$total""000"
+        progress=$({{jira}} view "$key" --template json --gjq "fields.aggregateprogress.percent")
+        item="['$key', '$summary', null, null, $total, $progress, $links],\n"
+        LIST+="$item"
+      done
+
+      echo "["
+      # Strip last , from array (plus \n)
+      echo "${LIST%,*}"
+      echo "]"
+
+  - name: epics
+    help: list epics
+    args:
+      - name: filter
+    options:
+      - name: project
+        short: p
+        required: true
+        help: The project in which to search
+    script: |-
+      filter=""
+      {{if args.filter}}
+        filter="{{args.filter}}"
+      {{end}}
+      {{jira}} list --template table --query "resolution = unresolved AND issuetype = Epic AND project = {{options.project}} $filter ORDER BY Rank Desc" --queryfields=customfield_12551,issuetype,priority,assignee,status,created,reporter
+  - name: premature
+    help: display issues started before the Epic is ready
+    options:
+      - name: project
+        short: p
+        help: The project in which to search
+        default: ""
+      - name: category
+        short: c
+        help: The category of project(s) in which to search
+        default: ""
+    script: |-
+      QUERY="(status not in (Open, New, Preparing) OR Sprint is not EMPTY OR fixVersion is not EMPTY) AND issue in issuesWhereEpicIn('status in (Draft, Candidate)')"
+      {{if options.project}}
+          # if `project: ...` configured just list the issues for current project
+          {{jira}} list --template table --query "project = {{options.project}} AND $QUERY"
+      {{else if options.category}}
+          # otherwise list issues for all projects in a category
+          {{jira}} list --template table --query "category = {{options.category}} AND project != DEVOPS AND $QUERY"
+      {{else}}
+          # otherwise list issues for all projects
+          {{jira}} list --template table --query "$QUERY"
+      {{end}}
+  - name: neglected
+    help: display issues in progress but no longer being worked on
+    options:
+      - name: project
+        short: p
+        help: The project in which to search
+        default: ""
+      - name: category
+        short: c
+        help: The category of project(s) in which to search
+        default: ""
+    script: |-
+      QUERY="sprint not in openSprints() AND sprint not in futureSprints() AND resolution = unresolved AND status not in (Open, Reopened, New, Draft, Preparing, 'Ready for production') ORDER BY status ASC, key ASC, created DESC"
+      {{if options.project}}
+          # if `project: ...` configured just list the issues for current project
+          {{jira}} list --template table --query "project = {{options.project}} AND $QUERY"
+      {{else if options.category}}
+          # otherwise list issues for all projects in a category
+          {{jira}} list --template table --query "category = {{options.category}} AND $QUERY"
+      {{else}}
+          # otherwise list issues for all projects
+          {{jira}} list --template table --query "$QUERY"
+      {{end}}
+  - name: ruhroh
+    help: display issues in progress but somehow marked as included in a release
+    options:
+      - name: project
+        short: p
+        help: The project in which to search
+        default: ""
+      - name: category
+        short: c
+        help: The category of project(s) in which to search
+        default: ""
+    script: |-
+      QUERY="category = AMPLIFY AND resolution = unresolved AND fixVersion in releasedVersions()"
+      {{if options.project}}
+          # if `project: ...` configured just list the issues for current project
+          {{jira}} list --template table --query "project = {{options.project}} AND $QUERY"
+      {{else if options.category}}
+          # otherwise list issues for all projects in a category
+          {{jira}} list --template table --query "category = {{options.category}} AND $QUERY"
+      {{else}}
+          # otherwise list issues for all projects
+          {{jira}} list --template table --query "$QUERY"
+      {{end}}

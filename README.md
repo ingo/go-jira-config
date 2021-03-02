@@ -4,7 +4,7 @@ Configuration files for go-jira (https://github.com/Netflix-Skunkworks/go-jira)
 
 ## Installation
 * OSX: brew install go-jira
-* Windows/Linus: Download from [https://github.com/Netflix-Skunkworks/go-jira](https://github.com/Netflix-Skunkworks/go-jira)
+* Windows/Linux: Download from [https://github.com/Netflix-Skunkworks/go-jira](https://github.com/Netflix-Skunkworks/go-jira)
 
 ### OSX-Only
 1. Create a file under ~/.jira.d/config.yml

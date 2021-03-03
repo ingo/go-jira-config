@@ -1,4 +1,4 @@
-endpoint: https://techweb.axway.com/jira
+endpoint: https://jira.axway.com/
 custom-commands:
   - name: print-project
     help: print the name of the configured project
@@ -17,7 +17,7 @@ custom-commands:
   - name: projects
     help: list all projects
     script: |
-      {{jira}} req "/rest/api/2/project"
+      {{jira}} req "rest/api/2/project"
   - name: committers
     help: list a project
     script: |
@@ -26,7 +26,7 @@ custom-commands:
   - name: project
     help: list a project
     script: |
-      {{jira}} req "/rest/api/2/project/$JIRA_PROJECT"
+      {{jira}} req "rest/api/2/project/$JIRA_PROJECT"
   - name: members
     help: members of a particular role on a project
     args:
@@ -64,7 +64,7 @@ custom-commands:
       esac
 
       # Loop through all projects
-      PROJECTS=$({{jira}} req "/rest/api/2/project?expand=lead" | jq -r '[.[] | {name: .name, key: .key, id: .id, lead: .lead.displayName, category: .projectCategory.name}]')
+      PROJECTS=$({{jira}} req "rest/api/2/project?expand=lead" | jq -r '[.[] | {name: .name, key: .key, id: .id, lead: .lead.displayName, category: .projectCategory.name}]')
       echo $PROJECTS | jq -c '.[]' | while read i; do
         name=$(echo $i | jq -c -r '.name')
         category=$(echo $i | jq -c -r '.category')
@@ -72,7 +72,7 @@ custom-commands:
         then
           id=$(echo $i | jq -c -r '.id')
           # Find the people attached to the specific role
-          names=$({{jira}} req "/rest/api/2/project/$id/role/$ROLEID" | jq -c -r '.actors[].displayName')
+          names=$({{jira}} req "rest/api/2/project/$id/role/$ROLEID" | jq -c -r '.actors[].displayName')
           echo "$name\n======================"
           echo "$names\n"
         fi
@@ -200,3 +200,35 @@ custom-commands:
           # otherwise list issues for all projects
           {{jira}} list --template table --query "$QUERY"
       {{end}}
+  - name: sprint
+    help: display issues for active sprint
+    script: |-
+      if [ -n "$JIRA_PROJECT" ]; then
+          # if `project: ...` configured just list the issues for current project
+          {{jira}} list --template table --query "sprint in openSprints() and type != epic and resolution = unresolved and project=$JIRA_PROJECT ORDER BY rank asc, created"
+      else
+          # otherwise list issues for all project
+          {{jira}} list --template table --query "sprint in openSprints() and type != epic and resolution = unresolved ORDER BY rank asc, created"
+      fi
+  - name: goals
+    help: display the goal for sprints on a board
+    options:
+      - name: boardName
+        short: b
+        help: The board name to search
+        default: "APIC-Beano"
+      - name: startAt
+        short: s
+        help: The sprint to start the list at
+        default: "50"
+    script: |-
+      board_id=$( {{jira}} req -M GET "rest/agile/1.0/board?name={{options.boardName}}" | jq '.values[0].id' )
+      echo board id is: ${board_id}
+      SPRINTS=$({{jira}} req "rest/agile/1.0/board/${board_id}/sprint?startAt={{options.startAt}}"  | jq '.values')
+      # Loop through each sprint
+      echo $SPRINTS | jq -c '.[]' | while read i; do
+        name=$(echo $i | jq -c -r '.name')
+        goal=$(echo $i | jq -c -r '.goal')
+        if [[ $goal = null ]]; then goal=''; fi
+        echo "$name:\t\t$goal"
+      done

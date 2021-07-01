@@ -16,7 +16,7 @@ Configuration files for go-jira (https://github.com/Netflix-Skunkworks/go-jira)
 	# Write out the current values of the config file
 	cat ~/Documents/Projects/go-jira-config/config.yml
 
-	# parse the JIRA project out of the package.json. Perhaps need to do this diferently for JAVA projects.
+	# parse the JIRA project out of the package.json. Perhaps need to do this differently for JAVA projects.
 	echo "project: $(jq '.bugs.url | sub(".*/";"")' -r package.json)"
 	```
 
@@ -24,6 +24,9 @@ Configuration files for go-jira (https://github.com/Netflix-Skunkworks/go-jira)
 TBD
 
 ## Commands
+
+Note, the templating language is https://gohugo.io/templates/introduction/
+
 * epics: list epics
 * gantt: create a gantt chart based on a list of issues
 * members: members of a particular role on a project

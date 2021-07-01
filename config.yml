@@ -4,6 +4,7 @@ custom-commands:
     help: print the name of the configured project
     script: |-
         echo $JIRA_PROJECT
+
   - name: mine
     help: display issues assigned to me
     script: |-
@@ -14,19 +15,23 @@ custom-commands:
           # otherwise list issues for all project
           {{jira}} list --template table --query "resolution = unresolved and assignee=currentuser() ORDER BY priority asc, created"
       fi
+
   - name: projects
     help: list all projects
     script: |
       {{jira}} req "rest/api/2/project"
+
   - name: committers
     help: list a project
     script: |
       names=$({{jira}} list --template json --query "project = $JIRA_PROJECT ORDER BY resolutiondate DESC" | jq '.issues[].fields.assignee.name')
       echo $names | tr '[:punct:]' ' ' | tr 'A-Z' 'a-z' | tr -s ' ' | tr ' ' '\n' | sort | uniq -c | sort -rn
+
   - name: project
     help: list a project
     script: |
       {{jira}} req "rest/api/2/project/$JIRA_PROJECT"
+
   - name: members
     help: members of a particular role on a project
     args:
@@ -131,6 +136,7 @@ custom-commands:
         filter="{{args.filter}}"
       {{end}}
       {{jira}} list --template table --query "resolution = unresolved AND issuetype = Epic AND project = {{options.project}} $filter ORDER BY Rank Desc" --queryfields=customfield_12551,issuetype,priority,assignee,status,created,reporter
+
   - name: premature
     help: display issues started before the Epic is ready
     options:
@@ -154,6 +160,7 @@ custom-commands:
           # otherwise list issues for all projects
           {{jira}} list --template table --query "$QUERY"
       {{end}}
+
   - name: neglected
     help: display issues in progress but no longer being worked on
     options:
@@ -177,6 +184,7 @@ custom-commands:
           # otherwise list issues for all projects
           {{jira}} list --template table --query "$QUERY"
       {{end}}
+
   - name: ruhroh
     help: display issues in progress but somehow marked as included in a release
     options:
@@ -200,6 +208,7 @@ custom-commands:
           # otherwise list issues for all projects
           {{jira}} list --template table --query "$QUERY"
       {{end}}
+
   - name: sprint
     help: display issues for active sprint
     script: |-
@@ -210,6 +219,7 @@ custom-commands:
           # otherwise list issues for all project
           {{jira}} list --template table --query "sprint in openSprints() and type != epic and resolution = unresolved ORDER BY rank asc, created"
       fi
+
   - name: goals
     help: display the goal for sprints on a board
     options:
@@ -217,18 +227,119 @@ custom-commands:
         short: b
         help: The board name to search
         default: "APIC-Beano"
+      - name: boardId
+        short: i
+        help: The board id to use. Superceeds the boardName if both are defined
+        default: ""
       - name: startAt
         short: s
-        help: The sprint to start the list at
-        default: "50"
+        help: The sprint at which to start the list
+        default: ""
+      - name: filter
+        short: f
+        help: The search filter to apply for the sprint name or description. Like "(active)"
+        default: ""
+      - name: context
+        short: c
+        help: The number of sprints to display before or after those found by the "filter"
     script: |-
-      board_id=$( {{jira}} req -M GET "rest/agile/1.0/board?name={{options.boardName}}" | jq '.values[0].id' )
-      echo board id is: ${board_id}
-      SPRINTS=$({{jira}} req "rest/agile/1.0/board/${board_id}/sprint?startAt={{options.startAt}}"  | jq '.values')
-      # Loop through each sprint
+      {{if options.boardId}}
+        board_id="{{options.boardId}}"
+      {{else}}
+        board_id=$( {{jira}} req -M GET "rest/agile/1.0/board?name={{options.boardName}}" | jq '.values[0].id' )
+        echo board id is: ${board_id}
+      {{end}}
+      STATE=""
+      START_AT=""
+      {{if options.startAt}}
+        START_AT="startAt={{options.startAt}}"
+      {{end}}
+      SPRINTS=$({{jira}} req "rest/agile/1.0/board/${board_id}/sprint?$START_AT"  | jq '.values')
+      OUTPUT=""
+
+      # Split the list to figure out the total number of elements
+      SPRINTS_LIST=( $(echo $SPRINTS | jq -r -c '.[].id') )
+
       echo $SPRINTS | jq -c '.[]' | while read i; do
+        # there is an issue here if the sprint goals or name include double quotes
+        id=$(echo $i | jq -c -r '.id')
         name=$(echo $i | jq -c -r '.name')
         goal=$(echo $i | jq -c -r '.goal')
+        state=$(echo $i | jq -c -r '.state')
         if [[ $goal = null ]]; then goal=''; fi
-        echo "$name:\t\t$goal"
+        OUTPUT+="\n$name:\t\t$goal ($state)"
+
+        # Write out if we are at the last element in the list
+        # We can't do this outside the loop, as the way this loop is constructed,
+        # OUTPUT is in a different context now
+        if [ $id = ${SPRINTS_LIST[${#SPRINTS_LIST[@]} - 1]} ]; then
+          {{if (and (options.context) (options.filter))}}
+            echo $OUTPUT | grep -C{{options.context}} "{{options.filter}}"
+          {{else}}
+            echo $OUTPUT
+          {{end}}
+        fi
       done
+
+  - name: remote-links list
+    help: list remote links on an issue
+    args:
+      - name: ISSUE
+        help: Issue id to lookup
+        required: true
+    script: |
+      {{jira}} req "rest/api/2/issue/{{args.ISSUE}}/remotelink"
+
+  - name: remote-links filtered
+    help: display all epics and their attached remote links
+    options:
+      - name: filter
+        short: f
+        help: The Jira filter/JQL to search for. Use quotes around phrases
+        default: "Amplify Unresolved Epics"
+    script: |-
+      # Get the list of all issues attached to the initial issue. TBD to allow an array of top-level issues
+      ISSUES=$({{jira}} list --template json --query "filter = '{{options.filter}}' and issue in hasRemoteLinks()")
+      ISSUE_LIST=$(echo $ISSUES | jq -r -c '.issues[].key')
+      LIST=""
+
+      # Due to newlines in the JSON output, jq fails to parse it correctly, so we have to do separate queries for each item
+      for key in $ISSUE_LIST; do
+        # echo "Processing $key"
+        summary=$({{jira}} remote-links list "$key" | jq -r '.[] | ["$key", .object.title, .object.url] | join("\t")')
+        # unclear why the parameter subsitution doesn't work in the jq command above
+        echo "${summary//\$key/$key}"
+      done
+  - name: boards list
+    help: list all Agile boards (that you can see)
+    options:
+      - name: project
+        short: p
+        help: The project in which to search
+        default: ""
+    script: |
+      BOARDS=""
+      {{if options.project}}
+        BOARDS=$({{jira}} req "rest/agile/1.0/board?projectKeyOrId={{options.project}}")
+      {{else}}
+        BOARDS=$({{jira}} req "rest/agile/1.0/board")
+      {{end}}
+      BOARDS_LIST=( $(echo $BOARDS | jq -r -c '.values[].id') )
+      # echo ${#BOARDS_LIST[@]}
+      for key in "${BOARDS_LIST[@]}"; do
+        properties=$({{jira}} req "rest/agile/1.0/board/${key}/configuration")
+        id=$( echo $properties | jq -r -c '.filter.id' )
+        config=$({{jira}} filter $id)
+        result=$( echo $properties | jq -r -c '["{{options.project}}", (.id|tostring), .name, .self, .type, .filter.id, .estimation.field.displayName] | join("\t")')
+        echo "$result\t$config"
+      done
+
+      # echo $BOARDS | jq -r -c '.values[] | ["{{options.project}}", (.id|tostring), .name, .self, .type] | join("\t")'
+  - name: filter
+    help: write out the configuration information for a filter
+    args:
+      - name: id
+        required: true
+    script: |
+      filter=$({{jira}} req "rest/api/2/filter/{{args.id}}")
+      echo $filter | jq -r -c '[.id, .jql, .owner.name] | join("\t")'

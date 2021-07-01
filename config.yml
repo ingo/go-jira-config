@@ -242,44 +242,51 @@ custom-commands:
       - name: context
         short: c
         help: The number of sprints to display before or after those found by the "filter"
+      - name: state
+        help: The state of sprint to retrieve. Comma-delimit multiple options e.g. closed,active,future
     script: |-
       {{if options.boardId}}
         board_id="{{options.boardId}}"
       {{else}}
         board_id=$( {{jira}} req -M GET "rest/agile/1.0/board?name={{options.boardName}}" | jq '.values[0].id' )
-        echo board id is: ${board_id}
+        # echo board id is: ${board_id}
       {{end}}
       STATE=""
       START_AT=""
       {{if options.startAt}}
         START_AT="startAt={{options.startAt}}"
       {{end}}
-      SPRINTS=$({{jira}} req "rest/agile/1.0/board/${board_id}/sprint?$START_AT"  | jq '.values')
+      {{if options.state}}
+        STATE="&state={{options.state}}"
+      {{end}}
+      SPRINTS=$({{jira}} req "rest/agile/1.0/board/${board_id}/sprint?$START_AT$STATE"  | jq '.values')
       OUTPUT=""
 
-      # Split the list to figure out the total number of elements
-      SPRINTS_LIST=( $(echo $SPRINTS | jq -r -c '.[].id') )
+      # only write out array if there are sprints
+      if [ "$SPRINTS" != "null" ]; then
+        # Split the list to figure out the total number of elements
+        SPRINTS_LIST=( $(echo $SPRINTS | jq -r -c '.[].id') )
+        echo $SPRINTS | jq -c '.[]' | while read i; do
+          # there is an issue here if the sprint goals or name include double quotes
+          id=$(echo $i | jq -c -r '.id')
+          name=$(echo $i | jq -c -r '.name')
+          goal=$(echo $i | jq -c -r '.goal')
+          state=$(echo $i | jq -c -r '.state')
+          if [[ $goal = null ]]; then goal=''; fi
+          OUTPUT+="\n$name:\t\t$goal ($state)"
 
-      echo $SPRINTS | jq -c '.[]' | while read i; do
-        # there is an issue here if the sprint goals or name include double quotes
-        id=$(echo $i | jq -c -r '.id')
-        name=$(echo $i | jq -c -r '.name')
-        goal=$(echo $i | jq -c -r '.goal')
-        state=$(echo $i | jq -c -r '.state')
-        if [[ $goal = null ]]; then goal=''; fi
-        OUTPUT+="\n$name:\t\t$goal ($state)"
-
-        # Write out if we are at the last element in the list
-        # We can't do this outside the loop, as the way this loop is constructed,
-        # OUTPUT is in a different context now
-        if [ $id = ${SPRINTS_LIST[${#SPRINTS_LIST[@]} - 1]} ]; then
-          {{if (and (options.context) (options.filter))}}
-            echo $OUTPUT | grep -C{{options.context}} "{{options.filter}}"
-          {{else}}
-            echo $OUTPUT
-          {{end}}
-        fi
-      done
+          # Write out if we are at the last element in the list
+          # We can't do this outside the loop, as the way this loop is constructed,
+          # OUTPUT is in a different context now
+          if [ $id = ${SPRINTS_LIST[${#SPRINTS_LIST[@]} - 1]} ]; then
+            {{if (and (options.context) (options.filter))}}
+              echo $OUTPUT | grep -C{{options.context}} "{{options.filter}}"
+            {{else}}
+              echo $OUTPUT
+            {{end}}
+          fi
+        done
+      fi
 
   - name: remote-links list
     help: list remote links on an issue
@@ -310,6 +317,7 @@ custom-commands:
         # unclear why the parameter subsitution doesn't work in the jq command above
         echo "${summary//\$key/$key}"
       done
+
   - name: boards list
     help: list all Agile boards (that you can see)
     options:
@@ -335,6 +343,7 @@ custom-commands:
       done
 
       # echo $BOARDS | jq -r -c '.values[] | ["{{options.project}}", (.id|tostring), .name, .self, .type] | join("\t")'
+      
   - name: filter
     help: write out the configuration information for a filter
     args:

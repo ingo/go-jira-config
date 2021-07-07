@@ -275,8 +275,10 @@ custom-commands:
           name=$(echo $i | jq -c -r '.name')
           goal=$(echo $i | jq -c -r '.goal')
           state=$(echo $i | jq -c -r '.state')
+          startDate=$(echo $i | jq -c -r '.startDate')
+          endDate=$(echo $i | jq -c -r '.endDate')
           if [[ $goal = null ]]; then goal=''; fi
-          OUTPUT+="\n$name:\t\t$goal ($state)"
+          OUTPUT+="\n$name\t$startDate\t$endDate\t$goal ($state)"
 
           # Write out if we are at the last element in the list
           # We can't do this outside the loop, as the way this loop is constructed,
@@ -320,6 +322,31 @@ custom-commands:
         # unclear why the parameter subsitution doesn't work in the jq command above
         echo "${summary//\$key/$key}"
       done
+  - name: board active
+    help: display if a board has any active sprints
+    options:
+      - name: boardName
+        short: b
+        help: The board name to search
+        default: "APIC-Beano"
+      - name: boardId
+        short: i
+        help: The board id to use. Superceeds the boardName if both are defined
+        default: ""
+    script: |-
+      {{if options.boardId}}
+        board_id="{{options.boardId}}"
+      {{else}}
+        board_id=$( {{jira}} req -M GET "rest/agile/1.0/board?name={{options.boardName}}" | jq '.values[0].id' )
+        # echo board id is: ${board_id}
+      {{end}}
+      SPRINTS=$({{jira}} req "rest/agile/1.0/board/${board_id}/sprint?&state=active"  | jq '.values')
+      # only write out array if there are sprints
+      if [ "$SPRINTS" == "null" ] || [ "$SPRINTS" == "[]" ]; then
+        echo "$board_id\t0"
+      else
+        echo "$board_id\t${#SPRINTS[@]}"
+      fi
 
   - name: boards list
     help: list all Agile boards (that you can see)

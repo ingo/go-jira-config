@@ -37,3 +37,7 @@ Note, the templating language is https://gohugo.io/templates/introduction/
 * project: list a project
 * projects:  list all projects
 * ruhroh:  display issues in progress but somehow marked as included in a release
+* filter: write out the configuration information for a filter
+* boards list: list all Agile boards (that you can see)
+* board active: display if a board has any active sprints
+* remote-links list: list remote links on an issue

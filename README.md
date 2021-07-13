@@ -48,27 +48,30 @@ Note, the templating language is https://gohugo.io/templates/introduction/
 If creating new commands, these are common arguments and flags to reuse
 
 args:
-  - name: ISSUE: Issue id to look up.
+  - name: ISSUE
+    - help: Issue id to look up.
+
+
 options:
   - name: boardName
-    short: b
-    help: The board name to search.
+    - short: b
+    - help: The board name to search.
   - name: boardId
-    short: i
-    help: The board id to use. Superceeds the boardName if both are defined
+    - short: i
+    - help: The board id to use. Superceeds the boardName if both are defined
   - name: category
-    short: c
-    help: The category of project(s) in which to search.
+    - short: c
+    - help: The category of project(s) in which to search.
   - name: grep
-    short: g
-    help: Text or regular expression to search for.
+    - short: g
+    - help: Text or regular expression to search for.
   - name: named-query
-    short: n
-    help: The name of a query in the `queries` configuration.
+    - short: n
+    - help: The name of a query in the `queries` configuration.
   - name: project
-    short: p
-    required: true
-    help: The project in which to search.
+    - short: p
+    - required: true
+    - help: The project in which to search.
   - name: query
-    short: q
-    help: Jira Query Language (JQL) expression for the search.
+    - short: q
+    - help: Jira Query Language (JQL) expression for the search.

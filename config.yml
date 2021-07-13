@@ -84,9 +84,10 @@ custom-commands:
       done
 
   - name: gantt
-    help: create a gantt chart based on a list of issues
+    help: create a Gantt chart based on a list of issues
     args:
       - name: ISSUE
+        help: Issue id to look up
         required: true
     script: |
 
@@ -229,15 +230,15 @@ custom-commands:
         default: "APIC-Beano"
       - name: boardId
         short: i
-        help: The board id to use. Superceeds the boardName if both are defined
+        help: The board id to use. Supersedes the boardName if both are defined
         default: ""
       - name: startAt
         short: s
-        help: The sprint at which to start the list
+        help: The sprint number at which to start the list
         default: ""
-      - name: filter
-        short: f
-        help: The search filter to apply for the sprint name or description. Like "(active)"
+      - name: grep
+        short: g
+        help: Text or regular expression to search for. Like "(active)"
         default: ""
       - name: context
         short: c
@@ -266,38 +267,23 @@ custom-commands:
       if [ "$SPRINTS" == "null" ] || [ "$SPRINTS" == "[]" ]; then
         echo "No sprint goals match"
       else
-        # Split the list to figure out the total number of elements
-        # dealing with carriage returns in values: https://stackoverflow.com/questions/52399819/invalid-string-control-characters-from-u0000-through-u001f-must-be-escaped-us?noredirect=1
-        SPRINTS_LIST=( $(echo $SPRINTS | tr '\r\n' ' ' | jq -r -c '.[].id') )
-        echo $SPRINTS | tr '\r\n' ' ' | jq -c '.[]' | while read i; do
-          # there is an issue here if the sprint goals or name include double quotes
-          id=$(echo $i | jq -c -r '.id')
-          name=$(echo $i | jq -c -r '.name')
-          goal=$(echo $i | jq -c -r '.goal')
-          state=$(echo $i | jq -c -r '.state')
-          startDate=$(echo $i | jq -c -r '.startDate')
-          endDate=$(echo $i | jq -c -r '.endDate')
-          if [[ $goal = null ]]; then goal=''; fi
-          OUTPUT+="\n$name\t$startDate\t$endDate\t$goal ($state)"
+        # https://stackoverflow.com/questions/39139107/how-to-format-a-json-string-as-a-table-using-jq
+        # OUTPUT=$(echo $SPRINTS | jq -r '(["Name","Start Date","End Date","Goal (Status)"] | (., map(length*"-"))), (.[] | [.name, .startDate, .endDate, (.goal + " (" + .state + ")")]) | @tsv')
+        OUTPUT=$(echo $SPRINTS | jq -r '(.[] | [.name, .startDate, .endDate, (.goal + " (" + .state + ")")]) | @tsv')
 
-          # Write out if we are at the last element in the list
-          # We can't do this outside the loop, as the way this loop is constructed,
-          # OUTPUT is in a different context now
-          if [ $id = ${SPRINTS_LIST[${#SPRINTS_LIST[@]} - 1]} ]; then
-            {{if (and (options.context) (options.filter))}}
-              echo $OUTPUT | grep -C{{options.context}} "{{options.filter}}" && echo "" || echo "No sprint goals match '{{options.filter}}'"
-            {{else}}
-              echo $OUTPUT
-            {{end}}
-          fi
-        done
+        # https://serverfault.com/questions/634150/losing-carriage-returns-in-variable-assignment/634152
+        {{if (and (options.context) (options.grep))}}
+          echo "$OUTPUT" | grep -C{{options.context}} "{{options.grep}}" && echo "" || echo "No sprint goals match '{{options.grep}}'"
+        {{else}}
+          echo "$OUTPUT"
+        {{end}}
       fi
 
   - name: remote-links list
     help: list remote links on an issue
     args:
       - name: ISSUE
-        help: Issue id to lookup
+        help: Issue id to look up
         required: true
     script: |
       {{jira}} req "rest/api/2/issue/{{args.ISSUE}}/remotelink"
@@ -305,22 +291,28 @@ custom-commands:
   - name: remote-links filtered
     help: display all epics and their attached remote links
     options:
-      - name: filter
-        short: f
-        help: The Jira filter/JQL to search for. Use quotes around phrases
-        default: "Amplify Unresolved Epics"
+      - name: query
+        help: Jira Query Language (JQL) expression for the search. If a filter, use "filter ='filtername'"
+        default: "filter = 'Amplify Unresolved Epics'"
+      - name: grep
+        short: g
+        help: Text or regular expression to search for. Like "ProdPad"
+        default: ""
     script: |-
       # Get the list of all issues attached to the initial issue. TBD to allow an array of top-level issues
-      ISSUES=$({{jira}} list --template json --query "filter = '{{options.filter}}' and issue in hasRemoteLinks()")
-      ISSUE_LIST=$(echo $ISSUES | jq -r -c '.issues[].key')
-      LIST=""
+      ISSUES=$({{jira}} list --template json --query "{{options.query}} and issue in hasRemoteLinks()" -f "key" --gjq "issues.#.key")
+      ISSUE_LIST=$(echo $ISSUES | jq -r '.[]')
 
       # Due to newlines in the JSON output, jq fails to parse it correctly, so we have to do separate queries for each item
       for key in $ISSUE_LIST; do
         # echo "Processing $key"
-        summary=$({{jira}} remote-links list "$key" | jq -r '.[] | ["$key", .object.title, .object.url] | join("\t")')
+        summary=$({{jira}} remote-links list "$key" | jq -r '.[] | ["$key", .object.title, .object.url] | @tsv')
         # unclear why the parameter subsitution doesn't work in the jq command above
-        echo "${summary//\$key/$key}"
+        {{if options.grep}}
+          echo "${summary//\$key/$key}" | grep "{{options.grep}}" && echo "" || echo "$key\tNo links match '{{options.grep}}'"
+        {{else}}
+          echo "${summary//\$key/$key}"
+        {{end}}
       done
   - name: board active
     help: display if a board has any active sprints
@@ -377,8 +369,51 @@ custom-commands:
   - name: filter
     help: write out the configuration information for a filter
     args:
-      - name: id
+      - name: ID
+        help: Internal filter id
         required: true
     script: |
-      filter=$({{jira}} req "rest/api/2/filter/{{args.id}}")
+      filter=$({{jira}} req "rest/api/2/filter/{{args.ID}}")
       echo $filter | jq -r -c '[.id, .jql, .owner.name] | join("\t")'
+
+  - name: dev-status
+    help: write out the current dev status for an issue
+    args:
+      - name: ISSUE
+        help: Issue id to look up
+        required: false
+    options:
+      - name: id
+        help: Flag if this is an internal issue id, NOT the issue key
+    script: |
+      id=""
+      {{if options.id}}
+        id="{{options.id}}"
+      {{else}}
+        id=$({{jira}} req "rest/api/latest/issue/{{args.ISSUE}}" | jq -r -c '.id')
+      {{end}}
+      {{jira}} req "rest/dev-status/latest/issue/summary?issueId=$id"
+
+  - name: reviews open
+    help: reviews currently open
+    options:
+      - name: query
+        help: Jira Query Language (JQL) expression for the search. If a filter, use "filter ='filtername'"
+        default: "filter = 'Amplify'"
+    script: |-
+      ISSUES=$({{jira}} list --template json --query "{{options.query}} and (issue in hasOpenPRs() or issue in hasOpenReviews())")
+      # echo $ISSUES
+      # This chokes if there is an errant backslash in the output.
+      ISSUE_LIST=$(echo $ISSUES | jq -r -c '.issues[] | (.key + ":" + .id)')
+      # echo $ISSUE_LIST
+
+      echo "Key\tID\tPR Date\tPR Status\tReview Date\tReview Status"
+      for id in $ISSUE_LIST; do
+        # echo "Processing $id"
+        ids=(${id//:/ })
+        # comparing this against the current date requires conversion from ISO8601
+        # some details: https://github.com/stedolan/jq/issues/1117
+        # however, this won't take into account weekends, so it's just easier to parse elsewhere
+        summary=$({{jira}} dev-status --id "${ids[1]}" | jq -r '[.summary.pullrequest.overall.lastUpdated, .summary.pullrequest.overall.state, .summary.review.overall.lastUpdated, .summary.review.overall.state] | @tsv')
+        echo "${ids[0]}\t${ids[1]}\t$summary"
+      done

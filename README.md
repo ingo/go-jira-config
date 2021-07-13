@@ -41,3 +41,34 @@ Note, the templating language is https://gohugo.io/templates/introduction/
 * boards list: list all Agile boards (that you can see)
 * board active: display if a board has any active sprints
 * remote-links list: list remote links on an issue
+* reviews open: reviews currently open
+
+### Conventions
+
+If creating new commands, these are common arguments and flags to reuse
+
+args:
+  - name: ISSUE: Issue id to look up.
+options:
+  - name: boardName
+    short: b
+    help: The board name to search.
+  - name: boardId
+    short: i
+    help: The board id to use. Superceeds the boardName if both are defined
+  - name: category
+    short: c
+    help: The category of project(s) in which to search.
+  - name: grep
+    short: g
+    help: Text or regular expression to search for.
+  - name: named-query
+    short: n
+    help: The name of a query in the `queries` configuration.
+  - name: project
+    short: p
+    required: true
+    help: The project in which to search.
+  - name: query
+    short: q
+    help: Jira Query Language (JQL) expression for the search.
